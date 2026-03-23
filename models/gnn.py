@@ -36,20 +36,6 @@ def build_edges():
 def compute_loss(pred, target):
     return np.mean((pred - target) ** 2)
 
-def train_step(gnn, input_nodes, target_nodes, edges, lr=0.01):
-    pred = gnn.forward(input_nodes, edges)
-
-    error = pred - target_nodes
-    loss = np.mean(error ** 2)
-
-    dW_self = 2 * np.mean(error * gnn.last_self)
-    dW_neigh = 2 * np.mean(error * gnn.last_neigh)
-
-    gnn.W_self -= lr * dW_self
-    gnn.W_neigh -= lr * dW_neigh
-
-    return loss
-
 class SimpleGNN:
     def __init__(self):
         self.W_self = np.random.randn()
@@ -76,32 +62,56 @@ class SimpleGNN:
             self.W_neigh * neighbor_mean
         )
 
+def train_step(gnn, input_nodes, target_nodes, edges, lr=0.01):
+    pred = gnn.forward(input_nodes, edges)
+
+    error = pred - target_nodes
+    loss = np.mean(error ** 2)
+
+    dW_self = 2 * np.mean(error * gnn.last_self)
+    dW_neigh = 2 * np.mean(error * gnn.last_neigh)
+
+    gnn.W_self -= lr * dW_self
+    gnn.W_neigh -= lr * dW_neigh
+
+    gnn.W_self = np.clip(gnn.W_self, -2, 2)
+    gnn.W_neigh = np.clip(gnn.W_neigh, -2, 2)
+
+    return loss
+
 def generate_sequence_gnn(initial_grid, steps, gnn, edges):
-    grids = [initial_grid]
+    grids = [initial_grid.copy()]
     current_nodes = grid_to_nodes(initial_grid)
 
     for _ in range(steps):
         current_nodes = gnn.forward(current_nodes, edges)
-        grids.append(nodes_to_grid(current_nodes))
+        grids.append(nodes_to_grid(current_nodes.copy()))
 
     return grids
 
 if __name__ == "__main__":
-    grid = generate_initial_grid()
+
     edges = build_edges()
     gnn = SimpleGNN()
 
-    physics_seq = generate_sequence_physics(grid, steps=20)
+    num_samples = 10
+    sequences = []
+
+    for _ in range(num_samples):
+        grid = generate_initial_grid()
+        seq = generate_sequence_physics(grid, steps=20)
+        sequences.append(seq)
 
     for epoch in range(200):
         total_loss = 0
 
-        for t in range(len(physics_seq) - 1):
-            input_nodes = grid_to_nodes(physics_seq[t])
-            target_nodes = grid_to_nodes(physics_seq[t + 1])
+        for physics_seq in sequences:
+            for t in range(len(physics_seq) - 1):
+                input_nodes = grid_to_nodes(physics_seq[t])
+                target_nodes = grid_to_nodes(physics_seq[t + 1])
 
-            loss = train_step(gnn, input_nodes, target_nodes, edges)
-            total_loss += loss
+                loss = train_step(gnn, input_nodes, target_nodes, edges)
+                total_loss += loss
 
         if epoch % 20 == 0:
             print(f"Epoch {epoch}, Loss: {total_loss:.6f}")
@@ -109,3 +119,12 @@ if __name__ == "__main__":
     print("\nLearned Weights:")
     print("W_self:", gnn.W_self)
     print("W_neigh:", gnn.W_neigh)
+    test_grid = generate_initial_grid()
+
+    true_seq = generate_sequence_physics(test_grid, steps=10)
+    pred_seq = generate_sequence_gnn(test_grid, steps=10, gnn=gnn, edges=edges)
+
+    print("\nRollout Evaluation:")
+    for t in range(11):
+        loss = compute_loss(pred_seq[t], true_seq[t])
+        print(f"Step {t}, Loss: {loss:.6f}")
